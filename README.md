@@ -29,7 +29,7 @@ The primary python libraries needed are listed in ``requirements.txt``.
 
 ## How To Run
 
-1. Download the dataset mentioned above and install the [hpe-core](https://github.com/event-driven-robotics/hpe-core/) repository. Follow the steps laid out to export the training data for the [eh36m dataset](https://github.com/event-driven-robotics/hpe-core/tree/main/datasets/h36m), specifically run ``export_eros.py`` with the paths in your file system for the downloaded dataset. This will lead to creation of a folder of images, and an annotation file called ``pose.json``.
+1. Download the [hpe-core](https://github.com/event-driven-robotics/hpe-core/) repository. Follow the steps laid out to export the training data for the [eh36m dataset](https://github.com/event-driven-robotics/hpe-core/tree/main/datasets/h36m), run all the scripts described in *datasets/h36m/README.md*. This will lead to creation of a folder of images, and an annotation file called ``pose.json``.
 
 2. Separate the annotation file to training and val. Ensure the path to the ``pose.json`` is added to ``scripts/data/split_trainval.py``. Changes can be made in this file for specific separation of data between training and validations splits. Then run the file using the following command:
 
