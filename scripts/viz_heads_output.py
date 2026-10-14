@@ -6,7 +6,7 @@ Visualization script to create nice images of the four heads output.
 
 import cv2
 import numpy as np
-import torch, argparse
+import torch, torchvision, argparse
 import torch.nn.functional as F
 from torchvision.utils import save_image
 from lib import MoveNet
@@ -49,7 +49,7 @@ def superimpose_center(img: torch.Tensor, center: torch.Tensor, alpha: float = 0
     return out
 
 
-def draw_vector(img: torch.Tensor, start_xy, end_xy, color=(255, 255, 255), thickness=2) -> torch.Tensor:
+def draw_vector(img: torch.Tensor, start_xy, end_xy, color=(255, 255, 255), thickness=1) -> torch.Tensor:
     canvas = np.ascontiguousarray((img.permute(1, 2, 0).numpy() * 255).astype(np.uint8))  # CHW [0,1] -> HWC uint8
     pt1 = (int(start_xy[0]), int(start_xy[1]))
     pt2 = (int(end_xy[0]), int(end_xy[1]))
@@ -71,7 +71,7 @@ def superimpose_regression(img: torch.Tensor, center: torch.Tensor, keypoints_re
     for kpt_x, kpt_y in zip(keypoints[::2], keypoints[1::2]):
         scaled_kpt_y = int((kpt_y+center_y) * scale_factor_y)
         scaled_kpt_x = int((kpt_x+center_x) * scale_factor_x)
-        out = draw_vector(out, (scaled_center_x, scaled_center_y), (scaled_kpt_x, scaled_kpt_y), thickness=1)
+        out = draw_vector(out, (scaled_center_x, scaled_center_y), (scaled_kpt_x, scaled_kpt_y), thickness=2)
     return out
 
 def superimpose_hm_reg(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor, heatmap: torch.Tensor, alpha: float = 0.5) -> torch.Tensor:
@@ -79,8 +79,10 @@ def superimpose_hm_reg(img: torch.Tensor, center: torch.Tensor, keypoints_regres
     out = superimpose_regression(out, center, keypoints_regression)
     return out
 
+def superimpose_hm_reg_score(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor, heatmap: torch.Tensor, alpha: float = 0.5) -> torch.Tensor:
+    pass
 
-def superimpose_offset(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor, offset: torch.Tensor, viz_scale: float = 1.05) -> torch.Tensor:
+def superimpose_offset(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor, offset: torch.Tensor, viz_scale: float = 1) -> torch.Tensor:
     center_y = center.max(dim=-1).values.argmax()
     center_x = center.max(dim=-2).values.argmax()
     keypoints = keypoints_regression[:, center_y, center_x]
@@ -92,13 +94,14 @@ def superimpose_offset(img: torch.Tensor, center: torch.Tensor, keypoints_regres
 
     out = img.clone()
     for idx, (kpt_x, kpt_y) in enumerate(zip(keypoints[::2], keypoints[1::2])):
-        kpt_x, kpt_y = int(torch.round(kpt_x+center_x).item()), int(torch.round(kpt_y+center_y).item())
+        kpt_x, kpt_y = center_x + int(kpt_x+0.5), center_y + int(kpt_y+0.5)  # computing absolute kpt position
+        kpt_x, kpt_y = min(max(0, kpt_x), offset.shape[-1]-1), min(max(0, kpt_y), offset.shape[-2]-1)  # clamping
         offset_x, offset_y = offset[2*idx, kpt_y, kpt_x], offset[2*idx+1, kpt_y, kpt_x]
         scaled_kpt_y = int(kpt_y * scale_factor_y)
         scaled_kpt_x = int(kpt_x * scale_factor_x)
-        scaled_offset_y = torch.round((kpt_y + offset_y) * scale_factor_y) * viz_scale
-        scaled_offset_x = torch.round((kpt_x + offset_x) * scale_factor_x) * viz_scale
-        out = draw_vector(out, (scaled_kpt_x, scaled_kpt_y), (scaled_offset_x, scaled_offset_y), thickness=1)
+        scaled_offset_y = scaled_kpt_y + offset_y * scale_factor_y * viz_scale
+        scaled_offset_x = scaled_kpt_x + offset_x * scale_factor_x * viz_scale
+        out = draw_vector(out, (scaled_kpt_x, scaled_kpt_y), (scaled_offset_x, scaled_offset_y), thickness=2)
     return out
 
 
@@ -121,11 +124,11 @@ def main():
     dataloader = data.getTestDataloader()
 
     with torch.no_grad():
-        batch0, batch0_name = next(iter(dataloader))
+        batch0, batch0_path = next(iter(dataloader))
         
         batch0 = batch0.cuda()
 
-        print(f"Processing images {batch0_name}...")
+        print(f"Processing images {batch0_path}...")
         print("Input size: ", batch0.size())
 
         # out = (keypoint heatmaps, person centers, keypoint regressions, offsets)
@@ -138,15 +141,16 @@ def main():
 
         heatmap0, center0, regression0, offset0 = heatmaps[0].cpu(), centers[0].cpu(), regressions[0].cpu(), offsets[0].cpu()
 
-        batch0 = batch0.cpu()
-        img0 = batch0[0] / 255  # [0, 255] -> [0, 1]
+        # batch0 = batch0.cpu()
+        # img0 = batch0[0] / 255  # [0, 255] -> [0, 1]
+        img0 = torchvision.io.read_image(batch0_path[0]) / 255
         save_image(img0, args.output_dir / 'input_img.jpg')
         save_image(superimpose_heatmap(img0, heatmap0), args.output_dir / 'heatmap.jpg')
         save_image(superimpose_center(img0, center0), args.output_dir / 'center.jpg')
         save_image(superimpose_regression(img0, center0, regression0), args.output_dir / 'keypt_regression.jpg')
         save_image(superimpose_hm_reg(img0, center0, regression0, heatmap0), args.output_dir / 'hm_reg.jpg')
         # save_image(superimpose_hm_reg_score(img0, center0, regression0, heatmap0), args.output_dir / 'hm_reg_score.jpg')
-        save_image(superimpose_offset(img0, center0, regression0, offset0), args.output_dir / 'keypt_offsets.jpg')
+        save_image(superimpose_offset(img0, center0, regression0, offset0, viz_scale=1), args.output_dir / 'keypt_offsets.jpg')
 
 
 def parse_args() -> argparse.Namespace:
