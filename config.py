@@ -7,7 +7,7 @@ https://github.com/fire717
 # dataset = "mpii2"
 dataset = 'h36m'
 # dataset = 'DHP19'
-home = "/home/usr/data/" + dataset + "/"
+home = "/home/fmecatti-iit.local/moveenet-v2/datasets/" + dataset + "/"
 # home = "/work/usr/Data/"+dataset+"/"
 
 cfg = {
@@ -93,7 +93,7 @@ if dataset == 'h36m':
     cfg["train_label_path"] = home + '/training/train_subject.json'
     cfg["val_label_path"] = home + '/training/val_subject.json'
 
-    cfg["test_img_path"] = home + '/samples_for_pred/'
+    cfg["test_img_path"] = home + '/tester/h36m_EROS/'
     cfg["exam_label_path"] = home + '/samples_for_pred/poses.json'
     cfg["exam_img_path"] = home + '/samples_for_pred/'
     cfg["eval_img_path"] = home + '/training/h36m_EROS/'
