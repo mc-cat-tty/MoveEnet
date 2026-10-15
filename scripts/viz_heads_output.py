@@ -1,7 +1,10 @@
 """
 @mc-cat-tty
 
-Visualization script to create nice images of the four heads output.
+Visualization script to create nice images of the four heads of MoveENet.
+Input: a EROS-like image. The fist batch returned by the dataloader is used as input, the dataset path is read from the configuration file.
+Output: person center, heatmap, keypoints regression, keypoints offsets, heatmap+regressions heatmap and superimposition pictures, stored
+in the output folder specified by the --output-dir parameter.
 """
 
 import cv2
@@ -14,6 +17,18 @@ from config import cfg as default_cfg
 from pathlib import Path
 from lib.data.data import Data
 
+def draw_vector(img: torch.Tensor, start_xy, end_xy, color=(255, 255, 255), thickness=1) -> torch.Tensor:
+    canvas = np.ascontiguousarray((img.permute(1, 2, 0).numpy() * 255).astype(np.uint8))  # CHW [0,1] -> HWC uint8
+    pt1 = (int(start_xy[0]), int(start_xy[1]))
+    pt2 = (int(end_xy[0]), int(end_xy[1]))
+    cv2.arrowedLine(canvas, pt1, pt2, color, thickness, tipLength=0.1)
+    return torch.from_numpy(canvas).permute(2, 0, 1).float() / 255
+
+def get_center_pixel_xy(center: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    center_y = center.max(dim=-1).values.argmax()
+    center_x = center.max(dim=-2).values.argmax()
+    return center_x, center_y
+
 def superimpose_heatmap(img: torch.Tensor, heatmap: torch.Tensor, alpha: float = 0.5) -> torch.Tensor:
     hm_one_channel = heatmap.amax(0, keepdim=True)
     hm_resized = F.interpolate(hm_one_channel.unsqueeze(0), size=(img.shape[-2], img.shape[-1]), mode='bilinear', align_corners=False)[0, 0]
@@ -25,8 +40,7 @@ def superimpose_heatmap(img: torch.Tensor, heatmap: torch.Tensor, alpha: float =
     return (1-blending_mask) * img + blending_mask * hm_colormapped
 
 def superimpose_center_dot(img: torch.Tensor, center: torch.Tensor) -> torch.Tensor:
-    center_y = center.max(dim=-1).values.argmax()
-    center_x = center.max(dim=-2).values.argmax()
+    center_x, center_y = get_center_pixel_xy(center)
     H, W = img.shape[-2:]
     center_dot_overlay = torch.zeros((H, W), dtype=torch.bool)
     scale_factor_y = img.shape[-2] / center.shape[-2]
@@ -38,7 +52,6 @@ def superimpose_center_dot(img: torch.Tensor, center: torch.Tensor) -> torch.Ten
         max(center_x-2, 0):min(center_x+2, W)] = True
     return center_dot_overlay
 
-
 def superimpose_center(img: torch.Tensor, center: torch.Tensor, alpha: float = 0.5, add_dot=False) -> torch.Tensor:
     """
     Superimpose center dot and confidence center heatmap
@@ -48,18 +61,8 @@ def superimpose_center(img: torch.Tensor, center: torch.Tensor, alpha: float = 0
         out += superimpose_center_dot(img, center)
     return out
 
-
-def draw_vector(img: torch.Tensor, start_xy, end_xy, color=(255, 255, 255), thickness=1) -> torch.Tensor:
-    canvas = np.ascontiguousarray((img.permute(1, 2, 0).numpy() * 255).astype(np.uint8))  # CHW [0,1] -> HWC uint8
-    pt1 = (int(start_xy[0]), int(start_xy[1]))
-    pt2 = (int(end_xy[0]), int(end_xy[1]))
-    cv2.arrowedLine(canvas, pt1, pt2, color, thickness, tipLength=0.1)
-    return torch.from_numpy(canvas).permute(2, 0, 1).float() / 255
-
-
 def superimpose_regression(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor) -> torch.Tensor:
-    center_y = center.max(dim=-1).values.argmax()
-    center_x = center.max(dim=-2).values.argmax()
+    center_x, center_y = get_center_pixel_xy(center)
     keypoints = keypoints_regression[:, center_y, center_x]
     
     scale_factor_y = img.shape[-2] / center.shape[-2]
@@ -80,11 +83,12 @@ def superimpose_hm_reg(img: torch.Tensor, center: torch.Tensor, keypoints_regres
     return out
 
 def superimpose_hm_reg_score(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor, heatmap: torch.Tensor, alpha: float = 0.5) -> torch.Tensor:
-    pass
+    joints_num = heatmap.shape[0]
+    for joint_idx in range(joints_num):
+        pass
 
 def superimpose_offset(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor, offset: torch.Tensor, viz_scale: float = 1) -> torch.Tensor:
-    center_y = center.max(dim=-1).values.argmax()
-    center_x = center.max(dim=-2).values.argmax()
+    center_x, center_y = get_center_pixel_xy(center)
     keypoints = keypoints_regression[:, center_y, center_x]
 
     assert center.shape[-2:] == offset.shape[-2:], "center and offset shape must be the same"
