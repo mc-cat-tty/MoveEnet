@@ -16,8 +16,22 @@ from lib import MoveNet
 from config import cfg as default_cfg
 from pathlib import Path
 from lib.data.data import Data
+from typing import Iterable
+
+def assert_chw(t: torch.Tensor, name: str):
+    assert t.ndim == 3, f"{name} must be a CHW tensor, got {t.ndim} dims (shape {tuple(t.shape)})"
+    assert not t.is_cuda, f"{name} must be on the CPU"
+
+def assert_img(img: torch.Tensor):
+    assert_chw(img, "img")
+    assert img.is_floating_point(), f"img must be a float tensor in [0, 1], not {img.dtype}"
+    assert img.min() >= 0 and img.max() <= 1 + 1e-6, f"img values must be in [0, 1], got [{img.min()}, {img.max()}]"
+
+def assert_even_channels(t: torch.Tensor, name: str):
+    assert t.shape[0] % 2 == 0, f"{name} must have an even number of channels (x, y pairs), not {t.shape[0]}"
 
 def draw_vector(img: torch.Tensor, start_xy, end_xy, color=(255, 255, 255), thickness=1) -> torch.Tensor:
+    assert_img(img)
     canvas = np.ascontiguousarray((img.permute(1, 2, 0).numpy() * 255).astype(np.uint8))  # CHW [0,1] -> HWC uint8
     pt1 = (int(start_xy[0]), int(start_xy[1]))
     pt2 = (int(end_xy[0]), int(end_xy[1]))
@@ -29,7 +43,26 @@ def get_center_pixel_xy(center: torch.Tensor) -> tuple[torch.Tensor, torch.Tenso
     center_x = center.max(dim=-2).values.argmax()
     return center_x, center_y
 
+def get_raw_keypoints_xy(center: torch.Tensor, keypoints_regression: torch.Tensor) -> Iterable[tuple[torch.Tensor, torch.Tensor]]:
+    cx, cy = get_center_pixel_xy(center)
+    keypoints_iterator = zip(keypoints_regression[::2, cy, cx], keypoints_regression[1::2, cy, cx])
+    return keypoints_iterator
+
+def get_absolute_keypoints_xy(center: torch.Tensor, keypoints_regression: torch.Tensor) -> Iterable[tuple[torch.Tensor, torch.Tensor]]:
+    assert center.shape[-2:] == keypoints_regression.shape[-2:], f"Center and keypoints regression tensors must have the same (H, W) shape, not {center.shape[-2:]} and {keypoints_regression.shape[-2:]}"
+    cx, cy = get_center_pixel_xy(center)
+    keypoints = get_raw_keypoints_xy(center, keypoints_regression)
+    for kpt_x, kpt_y in keypoints:
+        kpt_x, kpt_y = cx + int(kpt_x+0.5), cy + int(kpt_y+0.5)  # computing absolute kpt position, rounding towards zero
+        kpt_x = torch.min(torch.max(torch.tensor(0), kpt_x), torch.tensor(center.shape[-1]-1))  # clamping
+        kpt_y = torch.min(torch.max(torch.tensor(0), kpt_y), torch.tensor(center.shape[-2]-1))
+        yield kpt_x, kpt_y
+
 def superimpose_heatmap(img: torch.Tensor, heatmap: torch.Tensor, alpha: float = 0.5) -> torch.Tensor:
+    assert_img(img)
+    assert_chw(heatmap, "heatmap")
+    assert heatmap.min() >= 0 and heatmap.max() <= 1, f"heatmap values must be in [0, 1], got [{heatmap.min()}, {heatmap.max()}]"
+
     hm_one_channel = heatmap.amax(0, keepdim=True)
     hm_resized = F.interpolate(hm_one_channel.unsqueeze(0), size=(img.shape[-2], img.shape[-1]), mode='bilinear', align_corners=False)[0, 0]
     hm_u8 = (hm_resized*255).byte().numpy()
@@ -40,6 +73,10 @@ def superimpose_heatmap(img: torch.Tensor, heatmap: torch.Tensor, alpha: float =
     return (1-blending_mask) * img + blending_mask * hm_colormapped
 
 def superimpose_center_dot(img: torch.Tensor, center: torch.Tensor) -> torch.Tensor:
+    assert_img(img)
+    assert_chw(center, "center")
+    assert center.shape[0] == 1, f"Center tensor must have 1 channel, not {center.shape[0]}"
+
     center_x, center_y = get_center_pixel_xy(center)
     H, W = img.shape[-2:]
     center_dot_overlay = torch.zeros((H, W), dtype=torch.bool)
@@ -62,18 +99,24 @@ def superimpose_center(img: torch.Tensor, center: torch.Tensor, alpha: float = 0
     return out
 
 def superimpose_regression(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor) -> torch.Tensor:
-    center_x, center_y = get_center_pixel_xy(center)
-    keypoints = keypoints_regression[:, center_y, center_x]
+    assert_img(img)
+    assert_chw(center, "center")
+    assert_chw(keypoints_regression, "keypoints_regression")
+    assert_even_channels(keypoints_regression, "keypoints_regression")
+    assert center.shape[0] == 1, f"Center tensor must have 1 channel, not {center.shape[0]}"
+    assert center.shape[-2:] == keypoints_regression.shape[-2:], "Center and keypoints tensors (H, W) shape must be the same"
+
+    cx, cy = get_center_pixel_xy(center)
     
     scale_factor_y = img.shape[-2] / center.shape[-2]
     scale_factor_x = img.shape[-1] / center.shape[-1]
-    scaled_center_y = int(center_y * scale_factor_y)
-    scaled_center_x = int(center_x * scale_factor_x)
+    scaled_center_y = cy * scale_factor_y
+    scaled_center_x = cx * scale_factor_x
 
     out = img.clone()
-    for kpt_x, kpt_y in zip(keypoints[::2], keypoints[1::2]):
-        scaled_kpt_y = int((kpt_y+center_y) * scale_factor_y)
-        scaled_kpt_x = int((kpt_x+center_x) * scale_factor_x)
+    for kpt_x, kpt_y in get_absolute_keypoints_xy(center, keypoints_regression):
+        scaled_kpt_y = kpt_y * scale_factor_y
+        scaled_kpt_x = kpt_x * scale_factor_x
         out = draw_vector(out, (scaled_center_x, scaled_center_y), (scaled_kpt_x, scaled_kpt_y), thickness=2)
     return out
 
@@ -82,27 +125,42 @@ def superimpose_hm_reg(img: torch.Tensor, center: torch.Tensor, keypoints_regres
     out = superimpose_regression(out, center, keypoints_regression)
     return out
 
-def superimpose_hm_reg_score(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor, heatmap: torch.Tensor, alpha: float = 0.5) -> torch.Tensor:
-    joints_num = heatmap.shape[0]
-    for joint_idx in range(joints_num):
-        pass
+# def superimpose_hm_reg_score(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor, heatmap: torch.Tensor, alpha: float = 0.5) -> torch.Tensor:
+#     assert_img(img)
+#     assert_chw(center, "center")
+#     assert_chw(keypoints_regression, "keypoints_regression")
+#     assert_chw(heatmap, "heatmap")
+#     assert_even_channels(keypoints_regression, "keypoints_regression")
+#     assert center.shape[0] == 1, f"Center tensor must have 1 channel, not {center.shape[0]}"
+#     assert keypoints_regression.shape[0] == heatmap.shape[0]*2, f"Keypoints regression must have twice the channels of the heatmap, instead of {keypoints_regression.shape[0]} and {heatmap.shape[0]}"
+#     assert center.shape[-2:] == keypoints_regression.shape[-2:] == heatmap.shape[-2:], "Center, regressions, and heatmap tensors (H, W) shape must be the same"
+    
+#     joints_num = heatmap.shape[0]
+#     score_heatmap = heatmap.clone()
+#     center_x, center_y = get_center_pixel_xy(center)
+
+#     for joint_idx in range(joints_num):
+
+#         score_heatmap[joint_idx] /= torch.sqrt( (keypoints_regression[joint_idx])**2 + ()**2 ) + 1.8
 
 def superimpose_offset(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor, offset: torch.Tensor, viz_scale: float = 1) -> torch.Tensor:
-    center_x, center_y = get_center_pixel_xy(center)
-    keypoints = keypoints_regression[:, center_y, center_x]
+    assert_img(img)
+    assert_chw(center, "center")
+    assert_chw(keypoints_regression, "keypoints_regression")
+    assert_chw(offset, "offset")
+    assert_even_channels(keypoints_regression, "keypoints_regression")
+    assert center.shape[0] == 1, f"Center tensor must have 1 channel, not {center.shape[0]}"
+    assert keypoints_regression.shape[0] == offset.shape[0], f"Keypoint regression tensor must have the same number of channels as the offset tensor, instead of {keypoints_regression.shape[0]} and {offset.shape[0]}"
+    assert center.shape[-2:] == keypoints_regression.shape[-2:] == offset.shape[-2:], "Center, keypoints, and offset tensors (H, W) shape must be the same"
 
-    assert center.shape[-2:] == offset.shape[-2:], "center and offset shape must be the same"
-    
     scale_factor_y = img.shape[-2] / center.shape[-2]
     scale_factor_x = img.shape[-1] / center.shape[-1]
 
     out = img.clone()
-    for idx, (kpt_x, kpt_y) in enumerate(zip(keypoints[::2], keypoints[1::2])):
-        kpt_x, kpt_y = center_x + int(kpt_x+0.5), center_y + int(kpt_y+0.5)  # computing absolute kpt position
-        kpt_x, kpt_y = min(max(0, kpt_x), offset.shape[-1]-1), min(max(0, kpt_y), offset.shape[-2]-1)  # clamping
+    for idx, (kpt_x, kpt_y) in enumerate(get_absolute_keypoints_xy(center, keypoints_regression)):
         offset_x, offset_y = offset[2*idx, kpt_y, kpt_x], offset[2*idx+1, kpt_y, kpt_x]
-        scaled_kpt_y = int(kpt_y * scale_factor_y)
-        scaled_kpt_x = int(kpt_x * scale_factor_x)
+        scaled_kpt_y = kpt_y * scale_factor_y
+        scaled_kpt_x = kpt_x * scale_factor_x
         scaled_offset_y = scaled_kpt_y + offset_y * scale_factor_y * viz_scale
         scaled_offset_x = scaled_kpt_x + offset_x * scale_factor_x * viz_scale
         out = draw_vector(out, (scaled_kpt_x, scaled_kpt_y), (scaled_offset_x, scaled_offset_y), thickness=2)
@@ -145,9 +203,8 @@ def main():
 
         heatmap0, center0, regression0, offset0 = heatmaps[0].cpu(), centers[0].cpu(), regressions[0].cpu(), offsets[0].cpu()
 
-        # batch0 = batch0.cpu()
-        # img0 = batch0[0] / 255  # [0, 255] -> [0, 1]
-        img0 = torchvision.io.read_image(batch0_path[0]) / 255
+        # Read the full-size original image
+        img0 = torchvision.io.read_image(batch0_path[0]) / 255  # [0, 255] -> [0, 1]
         save_image(img0, args.output_dir / 'input_img.jpg')
         save_image(superimpose_heatmap(img0, heatmap0), args.output_dir / 'heatmap.jpg')
         save_image(superimpose_center(img0, center0), args.output_dir / 'center.jpg')
