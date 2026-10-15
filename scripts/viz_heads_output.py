@@ -1,5 +1,5 @@
 """
-@mc-cat-tty
+Author: @mc-cat-tty
 
 Visualization script to create nice images of the four heads of MoveENet.
 Input: a EROS-like image. The fist batch returned by the dataloader is used as input, the dataset path is read from the configuration file.
@@ -45,7 +45,7 @@ def get_center_pixel_xy(center: torch.Tensor) -> tuple[torch.Tensor, torch.Tenso
 
 def get_raw_keypoints_xy(center: torch.Tensor, keypoints_regression: torch.Tensor) -> Iterable[tuple[torch.Tensor, torch.Tensor]]:
     cx, cy = get_center_pixel_xy(center)
-    keypoints_iterator = zip(keypoints_regression[::2, cy, cx], keypoints_regression[1::2, cy, cx])
+    keypoints_iterator = zip(keypoints_regression[0::2, cy, cx], keypoints_regression[1::2, cy, cx])
     return keypoints_iterator
 
 def get_absolute_keypoints_xy(center: torch.Tensor, keypoints_regression: torch.Tensor) -> Iterable[tuple[torch.Tensor, torch.Tensor]]:
@@ -125,23 +125,34 @@ def superimpose_hm_reg(img: torch.Tensor, center: torch.Tensor, keypoints_regres
     out = superimpose_regression(out, center, keypoints_regression)
     return out
 
-# def superimpose_hm_reg_score(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor, heatmap: torch.Tensor, alpha: float = 0.5) -> torch.Tensor:
-#     assert_img(img)
-#     assert_chw(center, "center")
-#     assert_chw(keypoints_regression, "keypoints_regression")
-#     assert_chw(heatmap, "heatmap")
-#     assert_even_channels(keypoints_regression, "keypoints_regression")
-#     assert center.shape[0] == 1, f"Center tensor must have 1 channel, not {center.shape[0]}"
-#     assert keypoints_regression.shape[0] == heatmap.shape[0]*2, f"Keypoints regression must have twice the channels of the heatmap, instead of {keypoints_regression.shape[0]} and {heatmap.shape[0]}"
-#     assert center.shape[-2:] == keypoints_regression.shape[-2:] == heatmap.shape[-2:], "Center, regressions, and heatmap tensors (H, W) shape must be the same"
+def superimpose_hm_reg_score(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor, heatmap: torch.Tensor, alpha: float = 0.5) -> torch.Tensor:
+    assert_img(img)
+    assert_chw(center, "center")
+    assert_chw(keypoints_regression, "keypoints_regression")
+    assert_chw(heatmap, "heatmap")
+    assert_even_channels(keypoints_regression, "keypoints_regression")
+    assert center.shape[0] == 1, f"Center tensor must have 1 channel, not {center.shape[0]}"
+    assert keypoints_regression.shape[0] == heatmap.shape[0]*2, f"Keypoints regression must have twice the channels of the heatmap, instead of {keypoints_regression.shape[0]} and {heatmap.shape[0]}"
+    assert center.shape[-2:] == keypoints_regression.shape[-2:] == heatmap.shape[-2:], "Center, regressions, and heatmap tensors (H, W) shape must be the same"
     
-#     joints_num = heatmap.shape[0]
-#     score_heatmap = heatmap.clone()
-#     center_x, center_y = get_center_pixel_xy(center)
+    C, H, W = heatmap.shape
+    cx, cy = get_center_pixel_xy(center)
 
-#     for joint_idx in range(joints_num):
+    r = keypoints_regression[:, cx, cy]
+    rx = cx + (r[0::2] + 0.5).trunc()
+    ry = cy + (r[1::2] + 0.5).trunc()
 
-#         score_heatmap[joint_idx] /= torch.sqrt( (keypoints_regression[joint_idx])**2 + ()**2 ) + 1.8
+    ys = torch.arange(H).view(1, H, 1)
+    xs = torch.arange(W).view(1, 1, W)
+
+    scores = heatmap.clone()
+
+    dist = torch.hypot(xs - rx.view(C, 1, 1), ys - ry.view(C, 1, 1))
+    scores /= (dist + 1.8)
+    scores *= 1.8  # Scaling up the values, after the scale up, scores are still <= 1
+
+    return superimpose_heatmap(img, scores)
+
 
 def superimpose_offset(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor, offset: torch.Tensor, viz_scale: float = 1) -> torch.Tensor:
     assert_img(img)
@@ -210,7 +221,7 @@ def main():
         save_image(superimpose_center(img0, center0), args.output_dir / 'center.jpg')
         save_image(superimpose_regression(img0, center0, regression0), args.output_dir / 'keypt_regression.jpg')
         save_image(superimpose_hm_reg(img0, center0, regression0, heatmap0), args.output_dir / 'hm_reg.jpg')
-        # save_image(superimpose_hm_reg_score(img0, center0, regression0, heatmap0), args.output_dir / 'hm_reg_score.jpg')
+        save_image(superimpose_hm_reg_score(img0, center0, regression0, heatmap0), args.output_dir / 'hm_reg_score.jpg')
         save_image(superimpose_offset(img0, center0, regression0, offset0, viz_scale=1), args.output_dir / 'keypt_offsets.jpg')
 
 
