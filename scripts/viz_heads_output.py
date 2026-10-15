@@ -58,6 +58,48 @@ def get_absolute_keypoints_xy(center: torch.Tensor, keypoints_regression: torch.
         kpt_y = torch.min(torch.max(torch.tensor(0), kpt_y), torch.tensor(center.shape[-2]-1))
         yield kpt_x, kpt_y
 
+def get_hm_reg_alignment_scores(center: torch.Tensor, keypoints_regression: torch.Tensor, heatmap: torch.Tensor) -> torch.Tensor:
+    assert_chw(center, "center")
+    assert_chw(keypoints_regression, "keypoints_regression")
+    assert_chw(heatmap, "heatmap")
+    assert_even_channels(keypoints_regression, "keypoints_regression")
+    assert center.shape[0] == 1, f"Center tensor must have 1 channel, not {center.shape[0]}"
+    assert keypoints_regression.shape[0] == heatmap.shape[0]*2, f"Keypoints regression must have twice the channels of the heatmap, instead of {keypoints_regression.shape[0]} and {heatmap.shape[0]}"
+    assert center.shape[-2:] == keypoints_regression.shape[-2:] == heatmap.shape[-2:], "Center, regressions, and heatmap tensors (H, W) shape must be the same"
+    
+    C, H, W = heatmap.shape
+    cx, cy = get_center_pixel_xy(center)
+
+    r = keypoints_regression[:, cy, cx]
+    rx = cx + (r[0::2] + 0.5).trunc()
+    ry = cy + (r[1::2] + 0.5).trunc()
+
+    ys = torch.arange(H).view(1, H, 1)
+    xs = torch.arange(W).view(1, 1, W)
+
+    scores = heatmap.clone()
+
+    dist = torch.hypot(xs - rx.view(C, 1, 1), ys - ry.view(C, 1, 1))
+    scores /= (dist + 1.8)
+
+    return scores
+
+def get_joint_locations_xy(scores: torch.Tensor) -> Iterable[tuple[torch.Tensor, torch.Tensor]]:
+    """
+    Returns a tuple of tensors: x coordinates fo the joints, y coordinates of the joints.
+    """
+    joints_y = scores.max(dim=-1).values.argmax(dim=-1)
+    joints_x = scores.max(dim=-2).values.argmax(dim=-1)
+    return zip(joints_x, joints_y)
+
+def get_offsets_at_joint_locations_xy(scores: torch.Tensor, offsets: torch.Tensor) -> Iterable[tuple[tuple[torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor]]]:
+    """
+    Yields a tuple that contains joint coordinates and offsets coordinates (joint_x, joint_y), (offset_x, offset_y)
+    """
+    for ch, (jx, jy) in enumerate(get_joint_locations_xy(scores)):
+        ox, oy = offsets[2*ch, jy, jx], offsets[2*ch+1, jy, jx]
+        yield (jx, jy), (ox, oy)
+
 def superimpose_heatmap(img: torch.Tensor, heatmap: torch.Tensor, alpha: float = 0.5) -> torch.Tensor:
     assert_img(img)
     assert_chw(heatmap, "heatmap")
@@ -127,34 +169,11 @@ def superimpose_hm_reg(img: torch.Tensor, center: torch.Tensor, keypoints_regres
 
 def superimpose_hm_reg_score(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor, heatmap: torch.Tensor, alpha: float = 0.5) -> torch.Tensor:
     assert_img(img)
-    assert_chw(center, "center")
-    assert_chw(keypoints_regression, "keypoints_regression")
-    assert_chw(heatmap, "heatmap")
-    assert_even_channels(keypoints_regression, "keypoints_regression")
-    assert center.shape[0] == 1, f"Center tensor must have 1 channel, not {center.shape[0]}"
-    assert keypoints_regression.shape[0] == heatmap.shape[0]*2, f"Keypoints regression must have twice the channels of the heatmap, instead of {keypoints_regression.shape[0]} and {heatmap.shape[0]}"
-    assert center.shape[-2:] == keypoints_regression.shape[-2:] == heatmap.shape[-2:], "Center, regressions, and heatmap tensors (H, W) shape must be the same"
-    
-    C, H, W = heatmap.shape
-    cx, cy = get_center_pixel_xy(center)
-
-    r = keypoints_regression[:, cx, cy]
-    rx = cx + (r[0::2] + 0.5).trunc()
-    ry = cy + (r[1::2] + 0.5).trunc()
-
-    ys = torch.arange(H).view(1, H, 1)
-    xs = torch.arange(W).view(1, 1, W)
-
-    scores = heatmap.clone()
-
-    dist = torch.hypot(xs - rx.view(C, 1, 1), ys - ry.view(C, 1, 1))
-    scores /= (dist + 1.8)
+    scores = get_hm_reg_alignment_scores(center, keypoints_regression, heatmap)
     scores *= 1.8  # Scaling up the values, after the scale up, scores are still <= 1
-
     return superimpose_heatmap(img, scores)
 
-
-def superimpose_offset(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor, offset: torch.Tensor, viz_scale: float = 1) -> torch.Tensor:
+def superimpose_offset(img: torch.Tensor, center: torch.Tensor, keypoints_regression: torch.Tensor, heatmap: torch.Tensor, offset: torch.Tensor, viz_scale: float = 1) -> torch.Tensor:
     assert_img(img)
     assert_chw(center, "center")
     assert_chw(keypoints_regression, "keypoints_regression")
@@ -166,14 +185,14 @@ def superimpose_offset(img: torch.Tensor, center: torch.Tensor, keypoints_regres
 
     scale_factor_y = img.shape[-2] / center.shape[-2]
     scale_factor_x = img.shape[-1] / center.shape[-1]
+    scores = get_hm_reg_alignment_scores(center, keypoints_regression, heatmap)
 
     out = img.clone()
-    for idx, (kpt_x, kpt_y) in enumerate(get_absolute_keypoints_xy(center, keypoints_regression)):
-        offset_x, offset_y = offset[2*idx, kpt_y, kpt_x], offset[2*idx+1, kpt_y, kpt_x]
-        scaled_kpt_y = kpt_y * scale_factor_y
-        scaled_kpt_x = kpt_x * scale_factor_x
-        scaled_offset_y = scaled_kpt_y + offset_y * scale_factor_y * viz_scale
-        scaled_offset_x = scaled_kpt_x + offset_x * scale_factor_x * viz_scale
+    for (jx, jy), (ox, oy) in get_offsets_at_joint_locations_xy(scores, offset):
+        scaled_kpt_y = jy * scale_factor_y
+        scaled_kpt_x = jx * scale_factor_x
+        scaled_offset_y = scaled_kpt_y + oy * scale_factor_y * viz_scale
+        scaled_offset_x = scaled_kpt_x + ox * scale_factor_x * viz_scale
         out = draw_vector(out, (scaled_kpt_x, scaled_kpt_y), (scaled_offset_x, scaled_offset_y), thickness=2)
     return out
 
@@ -222,7 +241,7 @@ def main():
         save_image(superimpose_regression(img0, center0, regression0), args.output_dir / 'keypt_regression.jpg')
         save_image(superimpose_hm_reg(img0, center0, regression0, heatmap0), args.output_dir / 'hm_reg.jpg')
         save_image(superimpose_hm_reg_score(img0, center0, regression0, heatmap0), args.output_dir / 'hm_reg_score.jpg')
-        save_image(superimpose_offset(img0, center0, regression0, offset0, viz_scale=1), args.output_dir / 'keypt_offsets.jpg')
+        save_image(superimpose_offset(img0, center0, regression0, heatmap0, offset0, viz_scale=1), args.output_dir / 'keypt_offsets.jpg')
 
 
 def parse_args() -> argparse.Namespace:
