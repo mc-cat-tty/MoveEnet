@@ -1,0 +1,4 @@
+# -1 means missing value
+epoch: 97
+val_acc: 0.81209
+test_acc: -1

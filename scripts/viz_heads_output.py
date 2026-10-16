@@ -207,7 +207,7 @@ def main():
         mode='train'
     ).cuda()
 
-    state_dict = torch.load('checkpoints/mpii_pretrained_h36m_finetuned.pth')
+    state_dict = torch.load('checkpoints/mpii_pretrained_h36m_finetuned/mpii_pretrained_h36m_finetuned.pth')
     net.load_state_dict(state_dict)
 
     net.eval()
