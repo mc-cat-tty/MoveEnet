@@ -1,10 +1,13 @@
 __pycache__
+venv
+
 *.zip
 *.rar
 *.log
 *.bak
 *.onnx
 *.pyc
+
 
 /lib/__pycache__
 /data/annotations
@@ -16,4 +19,3 @@ __pycache__
 /output/predict
 runs/
 .idea/
-testers.py

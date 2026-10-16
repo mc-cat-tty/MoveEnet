@@ -207,7 +207,7 @@ def main():
         mode='train'
     ).cuda()
 
-    state_dict = torch.load('../hpe-core/example/movenet/models/e97_valacc0.81209.pth')
+    state_dict = torch.load('checkpoints/mpii_pretrained_h36m_finetuned.pth')
     net.load_state_dict(state_dict)
 
     net.eval()
@@ -246,7 +246,7 @@ def main():
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir", type=Path, default=Path("viz_heads"))
+    parser.add_argument("--output_dir", type=Path, default=Path("assets/MoveENet/imgs/viz_heads"))
     args = parser.parse_args()
     args.output_dir = args.output_dir.resolve()  # relative to the invocation directory (cwd)
     return args
