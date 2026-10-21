@@ -1,6 +1,12 @@
 """
 @Fire
 https://github.com/fire717
+
+This script is meant to run the model against the test set of a dataset.
+It returns the predictions of the model and the ground truth values.
+After this script, it is a best practice to also run the inspection script to visually inspect the predictions.
+
+Eg: python -m evaluate --ckpt checkpoints/mpii_pretrained_h36m_finetuned/mpii_pretrained_h36m_finetuned.pth --dataset h36m
 """
 import os, argparse
 import random
@@ -23,10 +29,9 @@ def main(cfg):
 
     run_task = Task(cfg, model)
 
-    # run_task.modelLoad("/home/ggoyal/data/mpii/output/e300_valacc0.86824.pth")
     run_task.modelLoad(cfg["ckpt"])
 
-    run_task.evaluate(data_loader,fastmode=True)
+    run_task.evaluate(data_loader, fastmode=True)
 
 
 if __name__ == '__main__':

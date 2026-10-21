@@ -96,8 +96,8 @@ if dataset == 'h36m':
     cfg["test_img_path"] = home + '/tester/h36m_EROS/'
     cfg["exam_label_path"] = home + '/samples_for_pred/poses.json'
     cfg["exam_img_path"] = home + '/samples_for_pred/'
-    cfg["eval_img_path"] = home + '/training/h36m_EROS/'
-    cfg["eval_label_path"] = home + '/training/val_subject.json'
+    cfg["eval_img_path"] = home + 'test/h36m_EROS/'
+    cfg["eval_label_path"] = home + 'test/h36m_anno/gt_poses.json'
 
 if dataset == 'h36m_cropped':
     cfg["num_classes"] = 13
