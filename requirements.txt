@@ -16,3 +16,7 @@ tensorboard==2.8.0
 protobuf==3.20.3
 # torch 1.10 imports distutils.version via setuptools; newer setuptools breaks this
 setuptools==58.0.4
+
+# for data inspection
+# 1.16.0+ pins protobuf==6.33.x, which breaks tensorboard 2.8.0 with protobuf 3.20.3
+fiftyone==1.14.2
