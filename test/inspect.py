@@ -10,9 +10,12 @@ from __future__ import annotations
 import argparse, json
 from pathlib import Path
 import fiftyone as fo
-from lib.visualization.visualization import hpecore_kps_labels, lines_in_skeleton
+from lib.visualization.visualization import hpecore_kps_labels, lines_in_skeleton, MOVENET_TO_DHP19_INDICES
 from dataclasses import dataclass
 from typing import Iterable
+
+
+MOVENET_TO_HPECORE_ORDER = MOVENET_TO_DHP19_INDICES[:, 0].tolist()
 
 
 @dataclass
@@ -48,21 +51,53 @@ def get_keypoints_from_json_line(line: GroundTruthJSONLine) -> fo.Keypoints:
     # Each keypoint triple is (x, y, visibility)
     kpt_triples = [line.keypoints[i:i + 3] for i in range(0, len(line.keypoints), 3)]
 
+    # The GT JSON follows the MoveNet joint order, the skeleton the HPECore one
     return fo.Keypoints(
         keypoints = [
             fo.Keypoint(
-                points = [[x, y] for x, y, _ in kpt_triples]
+                points = [kpt_triples[i][:2] for i in MOVENET_TO_HPECORE_ORDER]
             )
         ]
     )
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--evaluations-path", help="Path to the folder containing the output of the test set evaluations. Expected structure is <evaluations-path>/<dataset-name>/<seq-name>/<csv-labels>", type=Path)
-    parser.add_argument("--images-path", help="Path to the folder containing the images used by the test set evaluation script. Expected structure is <images-path>/<jpeg-images>", type=Path)
-    parser.add_argument("--gt-labels-json", help="Path to the JSON file containing the ground truth labels; this file provides the link between input images, timestamps, and output predictions. Expected structure is <gt-labels-path>/<json-file>", type=Path)
-    parser.add_argument("--parallel-comparisons", help="Number of parallel comparisons open in the inspection window", default=1, type=int)
-    parser.add_argument("--dataset-name", help="Name of the dataset we are inspecting", default="h36m")
+
+    parser.add_argument(
+        "--dataset-name", type=str, required=True,
+        help="The dataset name is used to build an entry to the Fiftyone database and cache the dataset content."
+    )    
+    parser.add_argument(
+        "--evaluations-path", type=Path, required=True,
+        help="Path to the folder containing the output of the test set evaluations. Expected structure is <evaluations-path>/<dataset-name>/<seq-name>/<csv-labels>"
+    )
+    
+    parser.add_argument(
+        "--images-path", type=Path, required=True,
+        help="Path to the folder containing the images used by the test set evaluation script. Expected structure is <images-path>/<jpeg-images>"
+    )
+    
+    parser.add_argument(
+        "--gt-labels-json", type=Path, required=True,
+        help="Path to the JSON file containing the ground truth labels; this file provides the link between input images, timestamps, and output predictions. Expected structure is <gt-labels-path>/<json-file>"
+    )
+    
+    parser.add_argument(
+        "--parallel-comparisons", default=1, type=int,
+        help="Number of parallel comparisons open in the inspection window"
+    )
+    
+    parser.add_argument(
+        "-f", "--force-rebuild", action='store_true', default=False,
+        help="Forcibly rebuild the Dataset in Fiftyone database",
+    )
+
+    parser.add_argument(
+        "--dev-run", action='store_true', default=False,
+        help="Development run; only 10 images are loaded from the disk",
+    )
+
+    
     return parser.parse_args()
 
 
@@ -78,12 +113,17 @@ def build_dataset(args) -> fo.Dataset:
     with open(args.gt_labels_json, "r") as gt_file:
         ground_truth_json = json.load(gt_file)
     ground_truth_poses = GroundTruthIndexedByImgName.from_dicts(ground_truth_json)
-
-    dataset = fo.Dataset.from_dir(
-        dataset_dir = args.images_path,
-        dataset_type = fo.types.ImageDirectory, 
-        name=args.dataset_name
-    )
+    
+    if args.dev_run:
+        image_paths = sorted(args.images_path.glob("*.jpg"))[:10]
+        dataset = fo.Dataset.from_images([str(p) for p in image_paths], name=args.dataset_name)
+    else:
+        dataset = fo.Dataset.from_dir(
+            dataset_dir = args.images_path,
+            dataset_type = fo.types.ImageDirectory, 
+            name=args.dataset_name
+        )
+    
     dataset.default_skeleton = hpecore_skeleton
 
 
@@ -93,21 +133,30 @@ def build_dataset(args) -> fo.Dataset:
         print("filepaths not availabe in dataset")
         exit(1)
 
-    ground_truths = (
+    ground_truths = [
         get_keypoints_from_json_line(ground_truth_poses[Path(fp).name]) for fp in filepaths
-    )
+    ]
+    
     dataset.set_values("ground_truth", ground_truths)
+
+    return dataset
 
 
 def main():
     args = parse_args()
 
-    if fo.dataset_exists(args.dataset_name):
+    dataset_exists = fo.dataset_exists(args.dataset_name)
+
+    if dataset_exists and args.force_rebuild:
+        fo.delete_dataset(args.dataset_name)
+        dataset_exists = False
+
+    if dataset_exists:
         dataset = fo.load_dataset(args.dataset_name)
     else:
         dataset = build_dataset(args)
     
-    session = fo.launch_app(dataset)
+    session = fo.launch_app(dataset, address="0.0.0.0")
     session.show()
     session.wait()
 
