@@ -136,7 +136,17 @@ def build_dataset(args) -> fo.Dataset:
     ground_truths = [
         get_keypoints_from_json_line(ground_truth_poses[Path(fp).name]) for fp in filepaths
     ]
+
+    sequences = [
+        ground_truth_poses[Path(fp).name].original_sample for fp in filepaths
+    ]
+
+    timestamps = [
+        ground_truth_poses[Path(fp).name].ts for fp in filepaths
+    ]
     
+    dataset.set_values("sequence", sequences)
+    dataset.set_values("timestamp", timestamps)
     dataset.set_values("ground_truth", ground_truths)
 
     return dataset
@@ -157,6 +167,10 @@ def main():
         dataset = build_dataset(args)
     
     session = fo.launch_app(dataset, address="0.0.0.0")
+    
+    view = dataset.group_by("sequence", order_by="timestamp")
+    session.view = view
+
     session.show()
     session.wait()
 
