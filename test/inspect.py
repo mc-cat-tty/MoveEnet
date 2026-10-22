@@ -9,16 +9,23 @@ Tip: when the dashboard opens, settings->render frames as video can be very usef
 
 from __future__ import annotations
 import argparse, json
-from pathlib import Path
 import fiftyone as fo
+import pandas as pd
+from pathlib import Path
 from lib.visualization.visualization import hpecore_kps_labels, lines_in_skeleton, MOVENET_TO_DHP19_INDICES
 from dataclasses import dataclass
 from typing import Iterable
 
 
 MOVENET_TO_HPECORE_ORDER = MOVENET_TO_DHP19_INDICES[:, 0].tolist()
+JOINTS_COORDINATES_COLUMNS = [
+    f"{joint}_{axis}" for joint in hpecore_kps_labels.keys() for axis in ("x", "y")
+]
+X_COLUMNS = [c for c in JOINTS_COORDINATES_COLUMNS if c.endswith("_x")]
+Y_COLUMNS = [c for c in JOINTS_COORDINATES_COLUMNS if c.endswith("_y")]
+PREDICTION_COLUMNS = ["ts", "delay"] + JOINTS_COORDINATES_COLUMNS
 
-
+### Ground Truth data structures and helpers ###
 @dataclass
 class GroundTruthJSONLine:
     img_name: str
@@ -47,7 +54,6 @@ class GroundTruthIndexedByImgName(dict):
             map(GroundTruthJSONLine.from_dict, dicts)
         )
 
-
 def get_keypoints_from_json_line(line: GroundTruthJSONLine) -> fo.Keypoints:
     # Each keypoint triple is (x, y, visibility)
     kpt_triples = [line.keypoints[i:i + 3] for i in range(0, len(line.keypoints), 3)]
@@ -61,6 +67,55 @@ def get_keypoints_from_json_line(line: GroundTruthJSONLine) -> fo.Keypoints:
         ]
     )
 
+### Predictions data structures and helpers ###
+def get_predictions_df_from_dir(dir: Path, sequences: Iterable[str], img_w: int, img_h: int) -> pd.DataFrame:
+    """
+    Returns a dataframe indexed by sequence name, timestamp. Each row contains the fields defined by PREDICTION_COLUMNS
+    Peforms coordinates normalization.
+    """
+    sequences = set(sequences)
+    csv_dfs = []
+
+    for seq in sequences:
+        # v TODO: make more robust, atm we assume just one csv is in the folder
+        csv_filenames = tuple((dir / seq).glob("*.csv"))
+        assert len(csv_filenames) > 0, f"Found zero CSV files in {dir / seq}... Aborting"
+        assert len(csv_filenames) == 1, f"Found more than one CSV files in {dir / seq}... Aborting"
+        csv_filename = csv_filenames[0]
+
+        csv_df = pd.read_csv(csv_filename, sep=" ", header=None, names=PREDICTION_COLUMNS)
+        csv_df["sequence"] = seq
+        csv_df["ts"] = csv_df["ts"].round(2)
+        csv_df[X_COLUMNS] /= img_w
+        csv_df[Y_COLUMNS] /= img_h
+        csv_dfs.append(csv_df)
+    
+    predictions_df = pd.concat(csv_dfs, ignore_index=True).set_index(["sequence", "ts"])
+    return predictions_df
+
+
+def get_keypoints_from_predictions_df(
+    predictions_df: pd.DataFrame, sequences: Iterable[str], timestamps: Iterable[float]
+) -> list[fo.Keypoints]:
+    """
+    Performs conversion to Fiftyone Keypoints, one per (sequence, timestamp) pair, in the given order.
+    """
+    keys = pd.MultiIndex.from_arrays([sequences, [round(ts, 2) for ts in timestamps]])
+    rows = predictions_df.reindex(keys)
+
+    missing = rows[JOINTS_COORDINATES_COLUMNS].isna().any(axis=1).to_numpy()
+    assert not missing.any(), f"Missing predictions for {missing.sum()} samples, eg: {keys[missing][:3].tolist()}"
+
+    # (n_samples, n_joints, 2); predictions are already in HPECore order, no reordering needed
+    points = rows[JOINTS_COORDINATES_COLUMNS].to_numpy().reshape(len(rows), -1, 2)
+
+    return [
+        fo.Keypoints(keypoints = [fo.Keypoint(points = p)])
+        for p in points.tolist()
+    ]
+
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
 
@@ -70,7 +125,7 @@ def parse_args() -> argparse.Namespace:
     )    
     parser.add_argument(
         "--evaluations-path", type=Path, required=True,
-        help="Path to the folder containing the output of the test set evaluations. Expected structure is <evaluations-path>/<dataset-name>/<seq-name>/<csv-labels>"
+        help="Path to the folder containing the output of the test set evaluations. Expected structure is <evaluations-path>/<seq-name>/<csv-labels>"
     )
     
     parser.add_argument(
@@ -122,11 +177,14 @@ def build_dataset(args) -> fo.Dataset:
         dataset = fo.Dataset.from_dir(
             dataset_dir = args.images_path,
             dataset_type = fo.types.ImageDirectory, 
-            name=args.dataset_name
+            name = args.dataset_name,
+            persistent = True
         )
     
     dataset.default_skeleton = hpecore_skeleton
-
+    dataset.compute_metadata()
+    # v TODO: make more robust, we assume all images are same w, h
+    img_w, img_h = dataset.first().metadata.width, dataset.first().metadata.height
 
     filepaths = dataset.values("filepath")
     
@@ -145,10 +203,14 @@ def build_dataset(args) -> fo.Dataset:
     timestamps = [
         ground_truth_poses[Path(fp).name].ts for fp in filepaths
     ]
+
+    predictions_df = get_predictions_df_from_dir(args.evaluations_path, sequences, img_w, img_h)
+    predictions = get_keypoints_from_predictions_df(predictions_df, sequences, timestamps)
     
     dataset.set_values("sequence", sequences)
     dataset.set_values("timestamp", timestamps)
     dataset.set_values("ground_truth", ground_truths)
+    dataset.set_values("prediction", predictions)
 
     return dataset
 
@@ -166,7 +228,7 @@ def main():
         dataset = fo.load_dataset(args.dataset_name)
     else:
         dataset = build_dataset(args)
-    
+
     session = fo.launch_app(dataset, address="0.0.0.0")
     
     view = dataset.group_by("sequence", order_by="timestamp")
