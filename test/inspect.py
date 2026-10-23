@@ -212,6 +212,17 @@ def build_dataset(args) -> fo.Dataset:
     dataset.set_values("ground_truth", ground_truths)
     dataset.set_values("prediction", predictions)
 
+    color_scheme = fo.ColorScheme(
+        color_by = "field",
+        fields = [
+            {"path": "ground_truth", "fieldColor": "#8ec5ff"},   # light blue
+            {"path": "prediction",   "fieldColor": "#ff8e8e"},   # light red
+        ],
+    )
+
+    dataset.app_config.color_scheme = color_scheme
+    dataset.save()
+
     return dataset
 
 
