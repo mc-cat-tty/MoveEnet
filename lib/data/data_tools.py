@@ -574,7 +574,7 @@ def getDataLoader(mode, input_data, cfg):
                           num_classes=cfg['num_classes'],
                           keypoint_subset=cfg['keypoint_subset']
                           ),
-            batch_size=1,
+            batch_size=64,
             shuffle=False,
             num_workers=0,
             pin_memory=False)

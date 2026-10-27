@@ -273,20 +273,22 @@ class Task():
         joint_total = np.zeros([self.cfg["num_classes"]])
         with torch.no_grad():
             start = time.time()
+            start_time_100_samples = start
             for batch_idx, (imgs, labels, kps_mask, img_names, torso_diameter, head_size_norm, img_size_original, ts) in enumerate(data_loader):
                 if img_size_original == 0:
                     continue
 
                 start_sample = time.time()
-                if batch_idx % 100 == 0 and batch_idx > 10:
-                    print('Finished samples: ', batch_idx)
-                    if not fastmode:
-                        acc_intermediate = correct_kps / total_kps
-                        acc_joint_mean_intermediate = np.mean(joint_correct / joint_total)
-                        print('[Info] Mean Keypoint Acc: {:.3f}%'.format(100. * acc_intermediate))
-                        print('[Info] Mean Joint Acc: {:.3f}%'.format(100. * acc_joint_mean_intermediate))
-                        # print('Time since beginning:', time.time()-start)
-                        print('[Info] Average Freq:', (batch_idx / (time.time() - start)), '\n')
+                batch_size = data_loader.batch_size
+                print('[Info] Average Freq:', (batch_idx*batch_size / (time.time() - start)), 'samples/sec \n')
+                if not fastmode:
+                    acc_intermediate = correct_kps / total_kps
+                    acc_joint_mean_intermediate = np.mean(joint_correct / joint_total)
+                    print('[Info] Mean Keypoint Acc: {:.3f}%'.format(100. * acc_intermediate))
+                    print('[Info] Mean Joint Acc: {:.3f}%'.format(100. * acc_joint_mean_intermediate))
+                    # print('Time since beginning:', time.time()-start)
+                
+                start_time_100_samples = time.time()
 
                 labels = labels.to(self.device)
                 imgs = imgs.to(self.device)
@@ -294,44 +296,49 @@ class Task():
 
                 output = self.model(imgs)
 
-                pre = movenetDecode(output, kps_mask, mode='output', num_joints=self.cfg["num_classes"])
-                gt = movenetDecode(labels, kps_mask, mode='label', num_joints=self.cfg["num_classes"])
+                pre_batch = movenetDecode(output, kps_mask, mode='output', num_joints=self.cfg["num_classes"])
+                gt_batch = movenetDecode(labels, kps_mask, mode='label', num_joints=self.cfg["num_classes"])
+                assert pre_batch.shape[0] == gt_batch.shape[0], "Expected equal batch size between prediction and labels"
 
-                if not fastmode:
-                    if torso_diameter is None:
-                        pck_acc = pck(pre, gt, head_size_norm, num_classes=self.cfg["num_classes"], mode='head')
-                    else:
-                        pck_acc = pck(pre, gt, torso_diameter, threshold=0.5, num_classes=self.cfg["num_classes"],
-                                      mode='torso')
-                    correct_kps += pck_acc["total_correct"]
-                    total_kps += pck_acc["total_keypoints"]
-                    joint_correct += pck_acc["correct_per_joint"]
-                    joint_total += pck_acc["anno_keypoints_per_joint"]
+                for sample_idx in range(pre_batch.shape[0]):
+                    pre = pre_batch[[sample_idx]]
+                    gt = gt_batch[[sample_idx]]
 
-                    img_out, pose_gt = restore_sizes(imgs[0], gt, (int(img_size_original[0]), int(img_size_original[1])))
-                    # print('gt after restore function', pose_gt)
+                    if not fastmode:
+                        if torso_diameter is None:
+                            pck_acc = pck(pre, gt, head_size_norm, num_classes=self.cfg["num_classes"], mode='head')
+                        else:
+                            pck_acc = pck(pre, gt, torso_diameter, threshold=0.5, num_classes=self.cfg["num_classes"],
+                                        mode='torso')
+                        correct_kps += pck_acc["total_correct"]
+                        total_kps += pck_acc["total_keypoints"]
+                        joint_correct += pck_acc["correct_per_joint"]
+                        joint_total += pck_acc["anno_keypoints_per_joint"]
 
-                _, pose_pre = restore_sizes(imgs[0], pre, (int(img_size_original[0]), int(img_size_original[1])))
-                # print('pre after restore function',pose_pre)
-                # superimpose_pose(img_out, pose_pre, tensors=False)
-                # continue
-                # kps_2d = np.reshape(pose_pre, [-1, 2])
-                kps_hpecore = movenet_to_hpecore(pose_pre)
-                kps_pre_hpecore = np.reshape(kps_hpecore, [-1])
-                row = self.create_row(ts,kps_pre_hpecore, delay=time.time()-start_sample)
-                sample = '_'.join(os.path.basename(img_names[0]).split('_')[:-1])
-                write_path = os.path.join(self.cfg['results_path'],self.cfg['dataset'],sample,'movenet_eventCount.csv')
-                ensure_loc(os.path.dirname(write_path))
-                self.write_results(write_path, row)
-                # superimpose_pose(img_out, pose_gt, tensors=False, filename='/home/ggoyal/data/h36m/tests/%s_gt.png' % img_names[0].split('/')[-1].split('.')[0])
-                # superimpose_pose(img_out, pose_pre, tensors=False,
-                #                  filename=('/media/Data/data/h36m/tests/%s_pre.png' % img_names[0].split('/')[-1].split('.')[0]))
+                        img_out, pose_gt = restore_sizes(imgs[0], gt, (int(img_size_original[0][sample_idx]), int(img_size_original[1][sample_idx])))
+                        # print('gt after restore function', pose_gt)
 
-        if not fastmode:
-            acc = correct_kps / total_kps
-            acc_joint_mean = np.mean(joint_correct / joint_total)
-            print('[Info] Mean Keypoint Acc: {:.3f}%'.format(100. * acc))
-            print('[Info] Mean Joint Acc: {:.3f}% \n'.format(100. * acc_joint_mean))
+                    _, pose_pre = restore_sizes(imgs[0], pre, (int(img_size_original[0][sample_idx]), int(img_size_original[1][sample_idx])))
+                    # print('pre after restore function',pose_pre)
+                    # superimpose_pose(img_out, pose_pre, tensors=False)
+                    # continue
+                    # kps_2d = np.reshape(pose_pre, [-1, 2])
+                    kps_hpecore = movenet_to_hpecore(pose_pre)
+                    kps_pre_hpecore = np.reshape(kps_hpecore, [-1])
+                    row = self.create_row(ts[sample_idx],kps_pre_hpecore, delay=time.time()-start_sample)
+                    sample = '_'.join(os.path.basename(img_names[0]).split('_')[:-1])
+                    write_path = os.path.join(self.cfg['results_path'],self.cfg['dataset'],sample,'movenet_eventCount.csv')
+                    ensure_loc(os.path.dirname(write_path))
+                    self.write_results(write_path, row)
+                    # superimpose_pose(img_out, pose_gt, tensors=False, filename='/home/ggoyal/data/h36m/tests/%s_gt.png' % img_names[0].split('/')[-1].split('.')[0])
+                    # superimpose_pose(img_out, pose_pre, tensors=False,
+                    #                  filename=('/media/Data/data/h36m/tests/%s_pre.png' % img_names[0].split('/')[-1].split('.')[0]))
+
+            if not fastmode:
+                acc = correct_kps / total_kps
+                acc_joint_mean = np.mean(joint_correct / joint_total)
+                print('[Info] Mean Keypoint Acc: {:.3f}%'.format(100. * acc))
+                print('[Info] Mean Joint Acc: {:.3f}% \n'.format(100. * acc_joint_mean))
 
     def evaluateTest(self, data_loader):
         self.model.eval()
