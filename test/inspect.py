@@ -4,7 +4,7 @@ Author: @mc-cat-tty
 Visually inspect the outputs (aka the predictions) of the evaluation script.
 
 Eg: python -m test.inspect --evaluations-path ../datasets/eros_sequential/h36m/ --images-path ../datasets/h36m/test/h36m_EROS/ --gt-labels-json ../datasets/h36m/test/h36m_anno/gt_poses.json --dataset-name h36m
-Tip: when the dashboard opens, settings->render frames as video can be very useful to check the correctness of the predictions and the GT
+Tip: when the dashboard opens, "settings"->"render frames as video" can be very useful to check the correctness of the predictions and the GT
 """
 
 from __future__ import annotations
