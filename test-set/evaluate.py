@@ -6,7 +6,8 @@ This script is meant to run the model against the test set of a dataset.
 It returns the predictions of the model and the ground truth values.
 After this script, it is a best practice to also run the inspection script to visually inspect the predictions.
 
-Eg: python -m evaluate --ckpt checkpoints/mpii_pretrained_h36m_finetuned/mpii_pretrained_h36m_finetuned.pth --dataset h36m
+Eg: python -m test-set.evaluate --ckpt checkpoints/mpii_pretrained_h36m_finetuned/mpii_pretrained_h36m_finetuned.pth --eval_img_path ../datasets/h36m/test/h36m_EROS_fixed_seq/ --eval_label_path ../datasets/h36m/test/h36m_anno_fixed_seq/gt_poses.json --dataset h36m
++ set results_path in the config.py file
 """
 import os, argparse
 import random
