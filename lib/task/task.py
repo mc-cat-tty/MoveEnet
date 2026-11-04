@@ -275,9 +275,6 @@ class Task():
             start = time.time()
             start_time_100_samples = start
             for batch_idx, (imgs, labels, kps_mask, img_names, torso_diameter, head_size_norm, img_size_original, ts) in enumerate(data_loader):
-                if img_size_original == 0:
-                    continue
-
                 start_sample = time.time()
                 batch_size = data_loader.batch_size
                 print('[Info] Average Freq:', (batch_idx*batch_size / (time.time() - start)), 'samples/sec \n')
@@ -315,10 +312,10 @@ class Task():
                         joint_correct += pck_acc["correct_per_joint"]
                         joint_total += pck_acc["anno_keypoints_per_joint"]
 
-                        img_out, pose_gt = restore_sizes(imgs[0], gt, (int(img_size_original[0][sample_idx]), int(img_size_original[1][sample_idx])))
+                        img_out, pose_gt = restore_sizes(imgs[sample_idx], gt, (int(img_size_original[0][sample_idx]), int(img_size_original[1][sample_idx])))
                         # print('gt after restore function', pose_gt)
 
-                    _, pose_pre = restore_sizes(imgs[0], pre, (int(img_size_original[0][sample_idx]), int(img_size_original[1][sample_idx])))
+                    _, pose_pre = restore_sizes(imgs[sample_idx], pre, (int(img_size_original[0][sample_idx]), int(img_size_original[1][sample_idx])))
                     # print('pre after restore function',pose_pre)
                     # superimpose_pose(img_out, pose_pre, tensors=False)
                     # continue
@@ -326,7 +323,7 @@ class Task():
                     kps_hpecore = movenet_to_hpecore(pose_pre)
                     kps_pre_hpecore = np.reshape(kps_hpecore, [-1])
                     row = self.create_row(ts[sample_idx],kps_pre_hpecore, delay=time.time()-start_sample)
-                    sample = '_'.join(os.path.basename(img_names[0]).split('_')[:-1])
+                    sample = '_'.join(os.path.basename(img_names[sample_idx]).split('_')[:-1])
                     write_path = os.path.join(self.cfg['results_path'],self.cfg['dataset'],sample,'movenet_eventCount.csv')
                     ensure_loc(os.path.dirname(write_path))
                     self.write_results(write_path, row)
