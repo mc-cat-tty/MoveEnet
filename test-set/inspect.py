@@ -182,7 +182,7 @@ def build_dataset(args) -> fo.Dataset:
         )
     
     dataset.default_skeleton = hpecore_skeleton
-    dataset.compute_metadata()
+    dataset.first().compute_metadata()
     # v TODO: make more robust, we assume all images are same w, h
     img_w, img_h = dataset.first().metadata.width, dataset.first().metadata.height
 
