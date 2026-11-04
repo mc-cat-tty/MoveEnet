@@ -13,7 +13,7 @@ home = "/home/fmecatti-iit.local/moveenet-v2/datasets/" + dataset + "/"
 cfg = {
     ##### Global Setting
     'GPU_ID': '0',
-    "num_workers": 4,
+    "num_workers": 20,
     "random_seed": 42,
     "cfg_verbose": True,
     "save_dir": home + "outputs/",
@@ -55,7 +55,7 @@ cfg = {
 
     ##### Test
     'predict_output_path': home + "outputs/predict/",
-    'results_path': "/home/fmecatti-iit.local/moveenet-v2/datasets/eros_batched_64",
+    'results_path': "/home/fmecatti-iit.local/moveenet-v2/datasets/test_set_evaluations/eros_batched_64",
     "exam_output_path": home + "outputs/exam/",
     "out_video_path": home + "video/"
 }

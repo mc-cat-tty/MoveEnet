@@ -574,10 +574,10 @@ def getDataLoader(mode, input_data, cfg):
                           num_classes=cfg['num_classes'],
                           keypoint_subset=cfg['keypoint_subset']
                           ),
-            batch_size=64,
+            batch_size=cfg['batch_size'],
             shuffle=False,
-            num_workers=0,
-            pin_memory=False)
+            num_workers=cfg['num_workers'],
+            pin_memory=cfg['pin_memory'])
 
         return val_loader
 
